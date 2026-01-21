@@ -35,7 +35,6 @@ numpy==2.3.5
 openpyxl==3.1.5
 packaging==25.0
 pandas==2.3.3
-pandas-profiling==3.2.0
 patsy==1.0.2
 phik==0.12.5
 pillow==12.1.0
@@ -76,5 +75,6 @@ visions==0.8.1
 watchdog==6.0.0
 wordcloud==1.9.5
 xgboost==3.1.3
+
 
 
