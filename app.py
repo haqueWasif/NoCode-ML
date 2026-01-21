@@ -23,7 +23,7 @@ from sklearn.svm import SVC, SVR
 from xgboost import XGBClassifier, XGBRegressor
 
 # --- 1. APP CONFIGURATION ---
-st.set_page_config(page_title="ScholarAI ML Studio", layout="wide", page_icon="🤖")
+st.set_page_config(page_title="NoCode ML Studio", layout="wide", page_icon="🤖")
 
 # Initialize Session State
 if 'df' not in st.session_state: st.session_state.df = None
@@ -139,7 +139,7 @@ with st.sidebar:
             st.success("Loaded!")
         except Exception as e: st.error(f"Error: {e}")
 
-st.title("🤖 ScholarAI: Advanced ML Studio")
+st.title("🤖 NoCodeML: Advanced ML Studio")
 
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Visualization", "⚙️ Preprocessing", "🧠 Training", "📈 Evaluation"])
 
