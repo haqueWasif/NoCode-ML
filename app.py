@@ -309,7 +309,7 @@ def plot_time_series_results(y_test, y_pred, is_class=False, le=None):
 
 with st.sidebar:
     st.title("🎛️ Project Controls")
-    st.write("User: **Wasiful Haque**")
+    st.write("Authors: **Wasiful Haque, Md. Jahirul Islam, Saifuddin Yasir**")
     uploaded_file = st.file_uploader("Upload Dataset", type=["csv", "xlsx"])
     if uploaded_file:
         try:
