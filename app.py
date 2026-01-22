@@ -351,6 +351,7 @@ with tab1:
             if st.button("Generate Report"):
                 with st.spinner("Analyzing..."):
                     pr = ProfileReport(df, explorative=True)
+                    pr.config.html.navbar_show = False
                     components.html(pr.to_html(), height=800, scrolling=True)
     else: st.info("Upload data to start.")
 
