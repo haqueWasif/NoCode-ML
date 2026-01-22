@@ -100,22 +100,6 @@ def build_advanced_pipeline(X, num_impute_strat, cat_impute_strat,
                             cols_log, cols_binning, cols_date, binning_n_bins):
     transformers = []
 
-    ### FEATURE ENGINEERING START ###
-    # 0. Date Features (Happens first)
-    if cols_date:
-        transformers.append(('date_eng', DateFeatureGenerator(), cols_date))
-
-    # 1. Log Transform Group
-    if cols_log:
-        # Log1p is safe for zeros, but we assume non-negative for simplicity
-        transformers.append(('num_log', FunctionTransformer(np.log1p, validate=False), cols_log))
-
-    # 2. Binning (Discretization) - Converts Numeric to Categorical (Ordinal)
-    if cols_binning:
-        transformers.append(('num_bin', KBinsDiscretizer(n_bins=binning_n_bins, encode='ordinal', strategy='quantile'), cols_binning))
-    ### FEATURE ENGINEERING END ###
-
-    # --- NUMERIC PIPELINES ---
     # Helper to get imputer based on selection
     def get_imputer(strat):
         if strat == "Mean": return SimpleImputer(strategy='mean')
@@ -124,6 +108,32 @@ def build_advanced_pipeline(X, num_impute_strat, cat_impute_strat,
         elif strat == "Hot-Deck (Random)": return RandomSampleImputer()
         return SimpleImputer(strategy='mean')
 
+    ### FEATURE ENGINEERING START ###
+    
+    # 0. Date Features (Happens first)
+    # DateFeatureGenerator handles its own NaNs via fillna(0) internally, so no external imputer needed.
+    if cols_date:
+        transformers.append(('date_eng', DateFeatureGenerator(), cols_date))
+
+    # 1. Log Transform Group (FIXED: Added Imputation)
+    if cols_log:
+        steps = [
+            ('imputer', get_imputer(num_impute_strat)),
+            ('num_log', FunctionTransformer(np.log1p, validate=False))
+        ]
+        transformers.append(('log_pipeline', Pipeline(steps), cols_log))
+
+    # 2. Binning (Discretization) (FIXED: Added Imputation)
+    if cols_binning:
+        steps = [
+            ('imputer', get_imputer(num_impute_strat)),
+            ('num_bin', KBinsDiscretizer(n_bins=binning_n_bins, encode='ordinal', strategy='quantile'))
+        ]
+        transformers.append(('bin_pipeline', Pipeline(steps), cols_binning))
+        
+    ### FEATURE ENGINEERING END ###
+
+    # --- NUMERIC SCALING PIPELINES ---
     if cols_standard:
         steps = [('imputer', get_imputer(num_impute_strat)), ('scaler', StandardScaler())]
         transformers.append(('num_standard', Pipeline(steps), cols_standard))
@@ -137,7 +147,7 @@ def build_advanced_pipeline(X, num_impute_strat, cat_impute_strat,
     # --- CATEGORICAL PIPELINES ---
     if cols_onehot:
         steps = [('imputer', SimpleImputer(strategy='most_frequent' if cat_impute_strat == 'Mode' else 'constant')),
-                 ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))] # Force dense for stability
+                 ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))]
         transformers.append(('cat_onehot', Pipeline(steps), cols_onehot))
     if cols_ordinal:
         steps = [('imputer', SimpleImputer(strategy='most_frequent' if cat_impute_strat == 'Mode' else 'constant')),
