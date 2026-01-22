@@ -137,10 +137,3 @@ This project is intended for learning, experimentation, and rapid prototyping. F
 Wasiful Haque, Md. Jahirul Islam, Saifuddin Yasir
 
 ---
-
-If you want, I can also:
-
-* Generate a `requirements.txt`
-* Add usage screenshots section
-* Add contribution guidelines
-* Refactor this into a Python package structure
