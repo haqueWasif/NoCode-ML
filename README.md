@@ -31,7 +31,6 @@ The project is designed for students, analysts, and practitioners who want to ex
 * End-to-end inference pipeline for new data
 
 ---
-
 ## Supported Models
 
 ### Classification
