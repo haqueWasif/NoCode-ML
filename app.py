@@ -17,7 +17,12 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, On
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.decomposition import PCA
-from sklearn.metrics import accuracy_score, mean_squared_error, r2_score, classification_report, confusion_matrix
+# --- UPDATED METRICS IMPORTS ---
+from sklearn.metrics import (
+    accuracy_score, mean_squared_error, r2_score, mean_absolute_error, 
+    classification_report, confusion_matrix, f1_score, precision_score, 
+    recall_score, roc_curve, auc
+)
 
 # Imbalanced Learn
 try:
@@ -28,17 +33,30 @@ except ImportError:
 
 # Models
 from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge, Lasso, ElasticNet
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor, StackingClassifier, StackingRegressor, VotingClassifier, VotingRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor, StackingClassifier, StackingRegressor, VotingClassifier, VotingRegressor, AdaBoostClassifier, AdaBoostRegressor
 from sklearn.svm import SVC, SVR
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.naive_bayes import GaussianNB
 from xgboost import XGBClassifier, XGBRegressor
+
+# Extra Models (LightGBM, CatBoost)
+try:
+    from lightgbm import LGBMClassifier, LGBMRegressor
+    HAS_LGBM = True
+except ImportError: HAS_LGBM = False
+
+try:
+    from catboost import CatBoostClassifier, CatBoostRegressor
+    HAS_CATBOOST = True
+except ImportError: HAS_CATBOOST = False
 
 # --- 1. APP CONFIGURATION ---
 st.set_page_config(page_title="NoCodeML Studio", layout="wide", page_icon="📈")
 
 # Initialize Session State
 if 'df' not in st.session_state: st.session_state.df = None
+if 'df_raw' not in st.session_state: st.session_state.df_raw = None 
+if 'loaded_file_name' not in st.session_state: st.session_state.loaded_file_name = None
 if 'model_results' not in st.session_state: st.session_state.model_results = {}
 if 'le' not in st.session_state: st.session_state.le = None
 if 'preprocessor' not in st.session_state: st.session_state.preprocessor = None
@@ -50,7 +68,6 @@ if 'feature_names' not in st.session_state: st.session_state.feature_names = []
 if 'pipeline_config' not in st.session_state: st.session_state.pipeline_config = {}
 
 # --- 2. CUSTOM TRANSFORMERS ---
-
 class RandomSampleImputer(BaseEstimator, TransformerMixin):
     def __init__(self):
         self.saved_values = {}
@@ -98,10 +115,135 @@ class DateFeatureGenerator(BaseEstimator, TransformerMixin):
             out_names.extend([f"{col}_year", f"{col}_month", f"{col}_day", f"{col}_dow"])
         return out_names
 
-# --- 3. CORE LOGIC ---
+# --- 3. HELPER FUNCTIONS ---
 
-def preprocess_and_split(df, target_col, task_type, is_ts, date_col_sort, 
-                         imp_num_mean, imp_num_median, imp_num_zero, imp_num_random,
+def evaluate_model_performance(model, X_test, y_test, task_type, le=None):
+    """Calculates and displays detailed metrics for any model."""
+    preds = model.predict(X_test)
+    
+    if task_type == 'Classification':
+        # 1. Metrics
+        acc = accuracy_score(y_test, preds)
+        f1 = f1_score(y_test, preds, average='weighted')
+        prec = precision_score(y_test, preds, average='weighted', zero_division=0)
+        rec = recall_score(y_test, preds, average='weighted')
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Accuracy", f"{acc:.4f}")
+        c2.metric("F1 Score", f"{f1:.4f}")
+        c3.metric("Precision", f"{prec:.4f}")
+        c4.metric("Recall", f"{rec:.4f}")
+        
+        st.divider()
+        
+        # 2. Plots
+        t1, t2 = st.tabs(["Confusion Matrix", "ROC Curve"])
+        
+        with t1:
+            fig, ax = plt.subplots()
+            if le:
+                names = [str(c) for c in le.classes_]
+                sns.heatmap(confusion_matrix(y_test, preds), annot=True, fmt='d', xticklabels=names, yticklabels=names, cmap='Blues', ax=ax)
+            else:
+                sns.heatmap(confusion_matrix(y_test, preds), annot=True, fmt='d', cmap='Blues', ax=ax)
+            st.pyplot(fig)
+            
+        with t2:
+            if hasattr(model, "predict_proba"):
+                try:
+                    probas = model.predict_proba(X_test)
+                    n_classes = len(np.unique(y_test))
+                    
+                    fig, ax = plt.subplots()
+                    if n_classes == 2:
+                        fpr, tpr, _ = roc_curve(y_test, probas[:, 1])
+                        roc_auc = auc(fpr, tpr)
+                        ax.plot(fpr, tpr, label=f'AUC = {roc_auc:.2f}')
+                        ax.plot([0, 1], [0, 1], 'k--')
+                        ax.set_xlabel('False Positive Rate')
+                        ax.set_ylabel('True Positive Rate')
+                        ax.legend()
+                        st.pyplot(fig)
+                    else:
+                        st.info("ROC Curve is displayed for binary classification only in this view.")
+                except Exception as e:
+                    st.warning(f"Could not plot ROC: {e}")
+            else:
+                st.info("This model/ensemble does not support probability predictions.")
+
+    else: # Regression
+        # 1. Metrics
+        mse = mean_squared_error(y_test, preds)
+        rmse = np.sqrt(mse)
+        mae = mean_absolute_error(y_test, preds)
+        r2 = r2_score(y_test, preds)
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("R2 Score", f"{r2:.4f}")
+        c2.metric("RMSE", f"{rmse:.4f}")
+        c3.metric("MSE", f"{mse:.4f}")
+        c4.metric("MAE", f"{mae:.4f}")
+        
+        st.divider()
+        
+        # 2. Plots
+        t1, t2 = st.tabs(["Actual vs Predicted", "Residuals"])
+        
+        with t1:
+            fig, ax = plt.subplots()
+            ax.scatter(y_test, preds, alpha=0.5)
+            # Ideal line
+            min_val = min(y_test.min(), preds.min())
+            max_val = max(y_test.max(), preds.max())
+            ax.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2)
+            ax.set_xlabel("Actual")
+            ax.set_ylabel("Predicted")
+            st.pyplot(fig)
+            
+        with t2:
+            residuals = y_test - preds
+            fig, ax = plt.subplots()
+            sns.histplot(residuals, kde=True, ax=ax)
+            ax.set_title("Residual Distribution")
+            ax.set_xlabel("Error")
+            st.pyplot(fig)
+
+def get_available_models(task_type):
+    models = {}
+    if task_type == 'Classification':
+        models.update({
+            'Logistic Regression': LogisticRegression(), 
+            'Random Forest': RandomForestClassifier(),
+            'XGBoost': XGBClassifier(use_label_encoder=False, eval_metric='logloss'), 
+            'SVM': SVC(probability=True),
+            'KNN': KNeighborsClassifier(), 
+            'Naive Bayes': GaussianNB(),
+            'AdaBoost': AdaBoostClassifier(),
+            'Gradient Boosting': GradientBoostingClassifier()
+        })
+        if HAS_LGBM: models['LightGBM'] = LGBMClassifier()
+        if HAS_CATBOOST: models['CatBoost'] = CatBoostClassifier(verbose=0)
+    else:
+        models.update({
+            'Linear Regression': LinearRegression(), 
+            'Random Forest': RandomForestRegressor(),
+            'XGBoost': XGBRegressor(), 
+            'SVR': SVR(), 
+            'KNN': KNeighborsRegressor(),
+            'Ridge': Ridge(), 
+            'Lasso': Lasso(), 
+            'ElasticNet': ElasticNet(),
+            'AdaBoost': AdaBoostRegressor(),
+            'Gradient Boosting': GradientBoostingRegressor()
+        })
+        if HAS_LGBM: models['LightGBM'] = LGBMRegressor()
+        if HAS_CATBOOST: models['CatBoost'] = CatBoostRegressor(verbose=0)
+    
+    return models
+
+def preprocess_and_split(df_input, target_col, task_type, is_ts, date_col_sort, 
+                         mask_val, mask_cols,
+                         imp_num_mean, imp_num_median, imp_num_random,
                          imp_cat_mode, imp_cat_const,
                          test_size, drop_cols,
                          cols_standard, cols_minmax, cols_robust, cols_onehot, cols_ordinal,
@@ -110,8 +252,27 @@ def preprocess_and_split(df, target_col, task_type, is_ts, date_col_sort,
                          use_poly, poly_degree,
                          use_smote):
     
-    # 0. Initial Clean & Drop
-    if drop_cols: df = df.drop(columns=drop_cols)
+    df = df_input.copy()
+
+    # --- 1. PLACEHOLDER MASKING ---
+    if mask_cols and mask_val is not None:
+        try:
+            for col in mask_cols:
+                if col in df.columns:
+                    if pd.api.types.is_numeric_dtype(df[col]):
+                        try: val_to_mask = float(mask_val)
+                        except: val_to_mask = mask_val
+                    else:
+                        val_to_mask = mask_val
+                    df[col] = df[col].replace(val_to_mask, np.nan)
+        except Exception as e:
+            st.warning(f"Masking warning: {e}")
+
+    # --- 2. INITIAL DROPS & TARGET PREP ---
+    if drop_cols: 
+        existing_drops = [c for c in drop_cols if c in df.columns]
+        df = df.drop(columns=existing_drops)
+    
     df = df.dropna(subset=[target_col])
     
     if is_ts and date_col_sort:
@@ -133,27 +294,25 @@ def preprocess_and_split(df, target_col, task_type, is_ts, date_col_sort,
         X = X[mask]
         y = y[mask]
 
-    # 1. SPLIT
+    # --- 3. TRAIN-TEST SPLIT ---
     if is_ts:
         X_train_raw, X_test_raw, y_train, y_test = train_test_split(X, y, test_size=test_size, shuffle=False)
     else:
         X_train_raw, X_test_raw, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
 
-    # 2. GRANULAR IMPUTATION
+    # --- 4. IMPUTATION ---
     impute_transformers = []
     
     def get_valid_cols(cols, df_cols): return [c for c in cols if c in df_cols]
     
     if imp_num_mean: impute_transformers.append(('imp_mean', SimpleImputer(strategy='mean'), get_valid_cols(imp_num_mean, X.columns)))
     if imp_num_median: impute_transformers.append(('imp_median', SimpleImputer(strategy='median'), get_valid_cols(imp_num_median, X.columns)))
-    if imp_num_zero: impute_transformers.append(('imp_zero', SimpleImputer(strategy='constant', fill_value=0), get_valid_cols(imp_num_zero, X.columns)))
-    # HOT DECKING
     if imp_num_random: impute_transformers.append(('imp_random', RandomSampleImputer(), get_valid_cols(imp_num_random, X.columns)))
     
     if imp_cat_mode: impute_transformers.append(('imp_mode', SimpleImputer(strategy='most_frequent'), get_valid_cols(imp_cat_mode, X.columns)))
     if imp_cat_const: impute_transformers.append(('imp_const', SimpleImputer(strategy='constant', fill_value='Missing'), get_valid_cols(imp_cat_const, X.columns)))
 
-    selected_cols = set(imp_num_mean + imp_num_median + imp_num_zero + imp_num_random + imp_cat_mode + imp_cat_const)
+    selected_cols = set(imp_num_mean + imp_num_median + imp_num_random + imp_cat_mode + imp_cat_const)
     remaining_cols = [c for c in X.columns if c not in selected_cols]
     
     if remaining_cols:
@@ -177,7 +336,7 @@ def preprocess_and_split(df, target_col, task_type, is_ts, date_col_sort,
         st.error(f"Imputation Failed: {e}")
         return None, None, None, None, None, None, None, None, None, None
 
-    # 3. Binning (Destructive - drops original)
+    # --- 5. BINNING ---
     def apply_binning(data_df):
         df_out = data_df.copy()
         if binning_config:
@@ -190,10 +349,7 @@ def preprocess_and_split(df, target_col, task_type, is_ts, date_col_sort,
                         elif config['method'] == 'Manual Ranges':
                             res = pd.cut(df_out[col], bins=config['params'], labels=False, include_lowest=True)
                         
-                        # SHIFT LOGIC: NaN=-1 -> 0, Bin0 -> 1, Bin1 -> 2
                         df_out[binned_col_name] = (res.fillna(-1) + 1).astype(int)
-                        
-                        # DROP ORIGINAL COLUMN
                         df_out = df_out.drop(columns=[col])
                     except: pass
         return df_out
@@ -201,17 +357,15 @@ def preprocess_and_split(df, target_col, task_type, is_ts, date_col_sort,
     X_train_binned = apply_binning(X_train_imp)
     X_test_binned = apply_binning(X_test_imp)
 
-    # 4. Pipeline Construction
+    # --- 6. SCALING & ENCODING ---
     current_cols = X_train_binned.columns.tolist()
     
-    # Filter selected columns to ensure we don't look for dropped columns
     final_standard = [c for c in cols_standard if c in current_cols]
     final_minmax = [c for c in cols_minmax if c in current_cols]
     final_robust = [c for c in cols_robust if c in current_cols]
     final_log = [c for c in cols_log if c in current_cols]
     final_date = [c for c in cols_date if c in current_cols]
     
-    # Handle OneHot logic for binned columns
     final_onehot = []
     for c in cols_onehot:
         binned_name = f"{c}_binned"
@@ -235,13 +389,10 @@ def preprocess_and_split(df, target_col, task_type, is_ts, date_col_sort,
     transformers = []
 
     if final_date: transformers.append(('date_eng', DateFeatureGenerator(), final_date))
-    
     if final_log: transformers.append(('log', FunctionTransformer(np.log1p, validate=False, feature_names_out='one-to-one'), final_log))
-
     if final_standard: transformers.append(('std', StandardScaler(), final_standard))
     if final_minmax: transformers.append(('minmax', MinMaxScaler(), final_minmax))
     if final_robust: transformers.append(('rob', RobustScaler(), final_robust))
-
     if final_onehot: transformers.append(('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False), final_onehot))
     if final_ordinal: transformers.append(('ord', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1), final_ordinal))
 
@@ -274,35 +425,10 @@ def preprocess_and_split(df, target_col, task_type, is_ts, date_col_sort,
                 X_train_final, y_train = smote.fit_resample(X_train_final, y_train)
                 st.success(f"SMOTE applied: Rows {X_train_final.shape[0]}")
             except Exception as e: st.warning(f"SMOTE failed: {e}")
-        else: st.warning("imbalanced-learn not installed.")
             
     feature_names = current_cols 
 
     return X_train_final, X_test_final, y_train, y_test, main_preprocessor, le, pca_model, poly_model, feature_names, global_imputer
-
-# --- HELPERS ---
-def get_available_models(task_type):
-    if task_type == 'Classification':
-        return {
-            'Logistic Regression': LogisticRegression(), 'Random Forest': RandomForestClassifier(),
-            'XGBoost': XGBClassifier(use_label_encoder=False, eval_metric='logloss'), 'SVM': SVC(probability=True),
-            'KNN': KNeighborsClassifier(), 'Naive Bayes': GaussianNB()
-        }
-    else:
-        return {
-            'Linear Regression': LinearRegression(), 'Random Forest': RandomForestRegressor(),
-            'XGBoost': XGBRegressor(), 'SVR': SVR(), 'KNN': KNeighborsRegressor(),
-            'Ridge': Ridge(), 'Lasso': Lasso(), 'ElasticNet': ElasticNet()
-        }
-
-def get_ensemble_models(base_models, task_type):
-    estimators = [(name, model) for name, model in list(base_models.items())[:3]]
-    if task_type == 'Classification':
-        return {'Voting Classifier': VotingClassifier(estimators=estimators, voting='soft'),
-                'Stacking Classifier': StackingClassifier(estimators=estimators, final_estimator=LogisticRegression())}
-    else:
-        return {'Voting Regressor': VotingRegressor(estimators=estimators),
-                'Stacking Regressor': StackingRegressor(estimators=estimators, final_estimator=LinearRegression())}
 
 def plot_time_series_results(y_test, y_pred, is_class=False, le=None):
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -326,9 +452,11 @@ def generate_python_code(config, model_name, best_params):
         clean_params.pop('l1_ratio', None)
     
     bin_config_str = str(config.get('binning_config', {}))
+    custom_code_str = config.get('custom_code', '')
 
     code = f"""import pandas as pd
 import numpy as np
+import re
 from sklearn.model_selection import train_test_split
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, OneHotEncoder, OrdinalEncoder, FunctionTransformer, PolynomialFeatures
@@ -375,8 +503,7 @@ BIN_CONFIG = {bin_config_str}
 # Selected Columns for Strategies
 IMP_MEAN = {config.get('imp_num_mean', [])}
 IMP_MEDIAN = {config.get('imp_num_median', [])}
-IMP_ZERO = {config.get('imp_num_zero', [])}
-IMP_RANDOM = {config.get('imp_num_random', [])} # Hot-Deck
+IMP_RANDOM = {config.get('imp_num_random', [])}
 IMP_MODE = {config.get('imp_cat_mode', [])}
 IMP_CONST = {config.get('imp_cat_const', [])}
 
@@ -391,6 +518,19 @@ COLS_DATE = {config['cols_date']}
 # --- LOAD DATA ---
 df = pd.read_csv('your_dataset.csv') 
 
+# --- 1. CUSTOM FE ---
+# Warning: Ensure this code is safe before running
+{custom_code_str}
+
+# --- 2. MASKING (Zero to NaN) ---
+MASK_COLS = {config.get('mask_cols', [])}
+MASK_VAL = {config.get('mask_val', None)}
+if MASK_COLS and MASK_VAL is not None:
+    for col in MASK_COLS:
+        if col in df.columns:
+             df[col] = df[col].replace(float(MASK_VAL) if pd.api.types.is_numeric_dtype(df[col]) else MASK_VAL, np.nan)
+
+# --- 3. SPLIT ---
 if DROP_COLS: 
     existing_drop = [c for c in DROP_COLS if c in df.columns]
     df = df.drop(columns=existing_drop)
@@ -399,17 +539,18 @@ df = df.dropna(subset=[TARGET])
 X = df.drop(columns=[TARGET])
 y = df[TARGET]
 
-# --- 1. GRANULAR IMPUTATION ---
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# --- 4. IMPUTATION ---
 imp_transformers = []
 if IMP_MEAN: imp_transformers.append(('mean', SimpleImputer(strategy='mean'), IMP_MEAN))
 if IMP_MEDIAN: imp_transformers.append(('median', SimpleImputer(strategy='median'), IMP_MEDIAN))
-if IMP_ZERO: imp_transformers.append(('zero', SimpleImputer(strategy='constant', fill_value=0), IMP_ZERO))
 if IMP_RANDOM: imp_transformers.append(('random', RandomSampleImputer(), IMP_RANDOM))
 if IMP_MODE: imp_transformers.append(('mode', SimpleImputer(strategy='most_frequent'), IMP_MODE))
 if IMP_CONST: imp_transformers.append(('const', SimpleImputer(strategy='constant', fill_value='Missing'), IMP_CONST))
 
 # Auto-fill remaining
-all_selected = set(IMP_MEAN + IMP_MEDIAN + IMP_ZERO + IMP_RANDOM + IMP_MODE + IMP_CONST)
+all_selected = set(IMP_MEAN + IMP_MEDIAN + IMP_RANDOM + IMP_MODE + IMP_CONST)
 remaining = [c for c in X.columns if c not in all_selected]
 rem_num = [c for c in remaining if pd.api.types.is_numeric_dtype(X[c])]
 rem_cat = [c for c in remaining if c not in rem_num]
@@ -420,13 +561,10 @@ if rem_cat: imp_transformers.append(('def_cat', SimpleImputer(strategy='most_fre
 imputer = ColumnTransformer(imp_transformers, verbose_feature_names_out=False)
 imputer.set_output(transform="pandas")
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# Apply Imputation
 X_train = imputer.fit_transform(X_train)
 X_test = imputer.transform(X_test)
 
-# --- 2. BINNING ---
+# --- 5. BINNING ---
 for col, cfg in BIN_CONFIG.items():
     if col in X_train.columns:
         b_name = f"{{col}}_binned"
@@ -438,21 +576,18 @@ for col, cfg in BIN_CONFIG.items():
                 X_train[b_name] = pd.cut(X_train[col], bins=cfg['params'], labels=False, include_lowest=True)
                 X_test[b_name] = pd.cut(X_test[col], bins=cfg['params'], labels=False, include_lowest=True)
             
-            # Shift by 1: NaNs become 0, Bin 0 becomes 1...
             X_train[b_name] = (X_train[b_name].fillna(-1) + 1).astype(int)
             X_test[b_name] = (X_test[b_name].fillna(-1) + 1).astype(int)
             
-            # Drop Original
             X_train.drop(columns=[col], inplace=True)
             X_test.drop(columns=[col], inplace=True)
         except: pass
 
-# --- 3. MAIN PIPELINE ---
+# --- 6. MAIN PIPELINE ---
 transformers = []
 curr_cols = X_train.columns.tolist()
 def filter_c(lst): return [c for c in lst if c in curr_cols]
 
-# Logic to swap user selection for binned cols
 def resolve_binned(lst):
     final = []
     for c in lst:
@@ -478,19 +613,10 @@ preprocessor = ColumnTransformer(transformers, remainder='passthrough')
 
 # --- MODEL ---
 best_params = {clean_params}
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor
-from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge, Lasso, ElasticNet
-from sklearn.svm import SVC, SVR
-from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
-from xgboost import XGBClassifier, XGBRegressor
+# Imports for models...
+# (Include all model imports here in generated code)
 
-model_map = {{
-    'Logistic Regression': LogisticRegression, 'Random Forest': RandomForestClassifier, 'XGBoost': XGBClassifier, 'SVM': SVC, 'KNN': KNeighborsClassifier,
-    'Linear Regression': LinearRegression, 'Ridge': Ridge, 'Lasso': Lasso, 'ElasticNet': ElasticNet, 'SVR': SVR
-}}
-
-ModelClass = model_map.get('{model_name}', RandomForestClassifier)
-model = ModelClass(**best_params)
+model = {model_name}(**best_params)
 
 # --- EXECUTION ---
 steps = [('preprocessor', preprocessor)]
@@ -521,9 +647,16 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Upload Dataset", type=["csv", "xlsx"])
     if uploaded_file:
         try:
-            if uploaded_file.name.endswith('.csv'): st.session_state.df = pd.read_csv(uploaded_file)
-            else: st.session_state.df = pd.read_excel(uploaded_file)
-            st.success("Loaded!")
+            if st.session_state.loaded_file_name != uploaded_file.name:
+                if uploaded_file.name.endswith('.csv'): 
+                    df_loaded = pd.read_csv(uploaded_file)
+                else: 
+                    df_loaded = pd.read_excel(uploaded_file)
+                
+                st.session_state.df = df_loaded
+                st.session_state.df_raw = df_loaded.copy()
+                st.session_state.loaded_file_name = uploaded_file.name
+                st.success("Loaded New File!")
         except Exception as e: st.error(f"Error: {e}")
 
 st.title("🤖 NoCodeML: Advanced ML Studio")
@@ -543,7 +676,6 @@ with tab1:
     df_viz = None
     if data_source == "Raw Data":
         if st.session_state.df is not None:
-            # FIX: FULL DATASET VISUALIZATION
             st.dataframe(st.session_state.df, height=400, use_container_width=True)
             st.caption("Tip: Hover over the top-right of the table and click the 'Maximize' arrows to see the full screen view.")
             df_viz = st.session_state.df 
@@ -554,7 +686,6 @@ with tab1:
             X_v = st.session_state.X_train
             y_v = st.session_state.y_train
             
-            # Name Cleaning
             feat_names = []
             if st.session_state.preprocessor:
                 try: raw_names = st.session_state.preprocessor.get_feature_names_out()
@@ -622,7 +753,29 @@ with tab2:
         st.subheader("Pipeline Configuration")
         all_cols = st.session_state.df.columns.tolist()
         
-        # 1. Global Drops & Type
+        with st.expander("🛠️ Custom Feature Engineering (Python Code)", expanded=False):
+            st.info("Write Python code to modify `df` directly.")
+            custom_code = st.text_area("e.g., df['Ratio'] = df['ColA'] / df['ColB']", height=100)
+            
+            c_btn1, c_btn2 = st.columns([1, 4])
+            with c_btn1:
+                if st.button("▶️ Apply & Update Columns"):
+                    if custom_code:
+                        try:
+                            local_vars = {'df': st.session_state.df, 'pd': pd, 'np': np, 're': re}
+                            exec(custom_code, globals(), local_vars)
+                            st.session_state.df = local_vars['df'] 
+                            st.success("Applied! Page will reload...")
+                            st.rerun() 
+                        except Exception as e:
+                            st.error(f"Error in code: {e}")
+            with c_btn2:
+                if st.button("🔄 Reset to Original Data"):
+                    if st.session_state.df_raw is not None:
+                        st.session_state.df = st.session_state.df_raw.copy()
+                        st.success("Reset! Reloading...")
+                        st.rerun()
+
         c1, c2, c3 = st.columns(3)
         with c1: drop_cols = st.multiselect("Drop Columns", all_cols)
         remaining_cols = [c for c in all_cols if c not in drop_cols]
@@ -641,17 +794,19 @@ with tab2:
         st.divider()
         st.markdown("### 2. Imputation Strategies (Granular)")
         
+        with st.expander("🎭 Handle Placeholder Values (Convert to NaN first)", expanded=True):
+            m_col1, m_col2 = st.columns(2)
+            with m_col1: mask_val = st.text_input("Value to treat as Missing (e.g., 0, -999, ?)", value="0")
+            with m_col2: mask_cols = st.multiselect("Apply to Columns", auto_num + auto_cat)
+            st.caption(f"Note: Values matching '{mask_val}' in selected columns will be converted to NaN, then filled by strategies below.")
+
         i1, i2 = st.columns(2)
         with i1:
             st.caption("Numeric Columns")
             imp_num_mean = st.multiselect("Impute with Mean", auto_num)
             avail_median = [c for c in auto_num if c not in imp_num_mean]
             imp_num_median = st.multiselect("Impute with Median", avail_median)
-            avail_zero = [c for c in avail_median if c not in imp_num_median]
-            imp_num_zero = st.multiselect("Impute with Zero", avail_zero)
-            
-            # --- HOT DECKING (RANDOM) ADDED HERE ---
-            avail_random = [c for c in avail_zero if c not in imp_num_zero]
+            avail_random = [c for c in avail_median if c not in imp_num_median]
             imp_num_random = st.multiselect("Impute with Random (Hot-Deck)", avail_random)
             
         with i2:
@@ -663,7 +818,6 @@ with tab2:
         st.divider()
         st.markdown("### 3. Feature Engineering")
         
-        # --- ADVANCED BINNING UI (Dynamic Update) ---
         binning_config = {}
         with st.expander("🧩 Feature Generation", expanded=False):
             fe_col1, fe_col2 = st.columns(2)
@@ -694,13 +848,8 @@ with tab2:
                             binning_config[c] = {'method': 'Manual Ranges', 'params': edges}
                         except: st.error(f"Invalid edges for {c}")
 
-        # --- DYNAMIC COLUMN ALLOCATION ---
         derived_bin_cols = [f"{c}_binned" for c in cols_to_bin]
-        
-        # Remove binned originals from numeric options
         numeric_options = [c for c in auto_num if c not in cols_date and c not in cols_to_bin]
-        
-        # Add binned to categorical options
         categorical_options = auto_cat + derived_bin_cols
 
         st.markdown("**Numeric Scaling**")
@@ -735,7 +884,8 @@ with tab2:
                     try:
                         X_train, X_test, y_train, y_test, prep, le, pca, poly, feat_names, imp_model = preprocess_and_split(
                             st.session_state.df, target_col, task_type, is_ts, date_col_sort,
-                            imp_num_mean, imp_num_median, imp_num_zero, imp_num_random,
+                            mask_val, mask_cols,
+                            imp_num_mean, imp_num_median, imp_num_random,
                             imp_cat_mode, imp_cat_const,
                             test_size, drop_cols,
                             cols_standard, cols_minmax, cols_robust, cols_onehot, cols_ordinal,
@@ -747,10 +897,11 @@ with tab2:
                         if X_train is not None:
                             st.session_state.pipeline_config = {
                                 'drop_cols': drop_cols, 'target_col': target_col, 'task_type': task_type,
+                                'custom_code': custom_code, 'mask_val': mask_val, 'mask_cols': mask_cols,
                                 'cols_standard': cols_standard, 'cols_minmax': cols_minmax, 'cols_robust': cols_robust,
                                 'cols_onehot': cols_onehot, 'cols_ordinal': cols_ordinal,
                                 'cols_log': cols_log, 'binning_config': binning_config, 'cols_date': cols_date,
-                                'imp_num_mean': imp_num_mean, 'imp_num_median': imp_num_median, 'imp_num_zero': imp_num_zero,
+                                'imp_num_mean': imp_num_mean, 'imp_num_median': imp_num_median,
                                 'imp_num_random': imp_num_random,
                                 'imp_cat_mode': imp_cat_mode, 'imp_cat_const': imp_cat_const,
                                 'use_smote': use_smote, 
@@ -758,12 +909,9 @@ with tab2:
                                 'use_poly': use_poly, 'poly_degree': poly_degree
                             }
                             
-                            # --- CRITICAL FIX START ---
-                            # Clear old model results and tuned models to prevent size mismatch errors
                             st.session_state.model_results = {}  
                             st.session_state.best_model = None
                             st.session_state.best_params = None
-                            # --- CRITICAL FIX END ---
 
                             st.session_state.X_train = X_train
                             st.session_state.X_test = X_test
@@ -788,17 +936,54 @@ with tab2:
 with tab3:
     if 'X_train' in st.session_state:
         st.subheader("Model Training")
-        base_models = get_available_models(st.session_state.task_type)
-        ensemble_models = get_ensemble_models(base_models, st.session_state.task_type)
-        all_models = {**base_models, **ensemble_models}
         
-        selected = st.multiselect("Select Models", list(all_models.keys()), default=list(base_models.keys())[0:2])
+        # 1. Base Models
+        available_models = get_available_models(st.session_state.task_type)
+        base_model_names = list(available_models.keys())
         
+        c_train1, c_train2 = st.columns(2)
+        with c_train1:
+            selected_base = st.multiselect("Select Base Models", base_model_names, default=base_model_names[:2])
+        
+        # 2. Ensemble Configuration
+        ensemble_config = {}
+        with c_train2:
+            st.markdown("**Ensemble Strategy**")
+            use_voting = st.checkbox("Train Voting Ensemble")
+            use_stacking = st.checkbox("Train Stacking Ensemble")
+            
+            if use_voting or use_stacking:
+                if not selected_base:
+                    st.warning("Select at least 2 Base Models first.")
+                else:
+                    ensemble_estimators = st.multiselect("Estimators for Ensemble", selected_base, default=selected_base)
+                    
+                    if len(ensemble_estimators) < 2:
+                        st.error("Ensembles need at least 2 estimators.")
+                    else:
+                        est_list = [(name, available_models[name]) for name in ensemble_estimators]
+                        
+                        if use_voting:
+                            if st.session_state.task_type == 'Classification':
+                                ensemble_config['Voting'] = VotingClassifier(estimators=est_list, voting='soft')
+                            else:
+                                ensemble_config['Voting'] = VotingRegressor(estimators=est_list)
+                                
+                        if use_stacking:
+                            final_est = LogisticRegression() if st.session_state.task_type == 'Classification' else LinearRegression()
+                            if st.session_state.task_type == 'Classification':
+                                ensemble_config['Stacking'] = StackingClassifier(estimators=est_list, final_estimator=final_est)
+                            else:
+                                ensemble_config['Stacking'] = StackingRegressor(estimators=est_list, final_estimator=final_est)
+
         if st.button("Train Selected Models"):
             res = {}
+            # Combine Base + Ensemble
+            final_models_to_train = {name: available_models[name] for name in selected_base}
+            final_models_to_train.update(ensemble_config)
+            
             bar = st.progress(0)
-            for i, name in enumerate(selected):
-                model = all_models[name]
+            for i, (name, model) in enumerate(final_models_to_train.items()):
                 try:
                     model.fit(st.session_state.X_train, st.session_state.y_train)
                     preds = model.predict(st.session_state.X_test)
@@ -810,37 +995,32 @@ with tab3:
                         metric = "R2 Score"
                     res[name] = {"model": model, "score": score, "preds": preds, "metric": metric}
                 except Exception as e: st.error(f"Failed {name}: {e}")
-                bar.progress((i+1)/len(selected))
+                bar.progress((i+1)/len(final_models_to_train))
+            
             st.session_state.model_results = res
             st.success("Training Complete!")
 
 # --- TAB 4: EVALUATION ---
 with tab4:
     if st.session_state.model_results:
-        st.subheader("Results")
+        st.subheader("Model Evaluation")
+        
+        # 1. Summary Table
         res_df = pd.DataFrame([{ "Model": k, v['metric']: v['score']} for k,v in st.session_state.model_results.items()])
         st.table(res_df.sort_values(by=res_df.columns[1], ascending=False))
         
-        sel_model = st.selectbox("Visualize Model", list(st.session_state.model_results.keys()))
-        preds = st.session_state.model_results[sel_model]['preds']
-        y_test = st.session_state.y_test
+        # 2. Detailed Drill-Down
+        sel_model_name = st.selectbox("Select Model for Details", list(st.session_state.model_results.keys()))
+        selected_data = st.session_state.model_results[sel_model_name]
         
-        if st.session_state.is_ts:
-            is_class = st.session_state.task_type == 'Classification'
-            st.pyplot(plot_time_series_results(y_test, preds, is_class, st.session_state.le))
-        elif st.session_state.task_type == "Regression":
-            fig, ax = plt.subplots()
-            ax.scatter(y_test, preds, alpha=0.5); ax.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
-            st.pyplot(fig)
-        else:
-            fig, ax = plt.subplots()
-            if st.session_state.le:
-                names = [str(c) for c in st.session_state.le.classes_]
-                sns.heatmap(confusion_matrix(y_test, preds), annot=True, fmt='d', xticklabels=names, yticklabels=names)
-            else:
-                sns.heatmap(confusion_matrix(y_test, preds), annot=True, fmt='d')
-            st.pyplot(fig)
-            st.text(classification_report(y_test, preds))
+        st.markdown(f"### Performance: {sel_model_name}")
+        evaluate_model_performance(
+            selected_data['model'], 
+            st.session_state.X_test, 
+            st.session_state.y_test, 
+            st.session_state.task_type, 
+            st.session_state.le
+        )
 
 # --- TAB 5: TUNING ---
 with tab5:
@@ -852,22 +1032,29 @@ with tab5:
         else:
             trained_models_list = list(st.session_state.model_results.keys())
             tune_model_name = st.selectbox("Select Model to Tune", trained_models_list)
-            available_fresh_models = get_available_models(st.session_state.task_type)
             
+            # --- DETAILED HYPERPARAMETERS ---
             model_params_schema = {
-                'Logistic Regression': {'C': {'type': 'float_list', 'default': '0.1, 1.0, 10.0', 'label': 'C'}, 'solver': {'type': 'cat_list', 'options': ['saga', 'liblinear'], 'default': ['saga'], 'label': 'Solver'}, 'penalty': {'type': 'cat_list', 'options': ['l2', 'l1'], 'default': ['l2'], 'label': 'Penalty'}},
-                'Random Forest': {'n_estimators': {'type': 'int_list', 'default': '50, 100', 'label': 'Trees'}, 'max_depth': {'type': 'int_list', 'default': '10, 20', 'label': 'Depth'}},
-                'XGBoost': {'n_estimators': {'type': 'int_list', 'default': '50, 100', 'label': 'Trees'}, 'learning_rate': {'type': 'float_list', 'default': '0.01, 0.1', 'label': 'Rate'}, 'max_depth': {'type': 'int_list', 'default': '3, 6', 'label': 'Depth'}},
-                'SVM': {'C': {'type': 'float_list', 'default': '0.1, 1', 'label': 'C'}, 'kernel': {'type': 'cat_list', 'options': ['linear', 'rbf'], 'default': ['rbf'], 'label': 'Kernel'}},
-                'KNN': {'n_neighbors': {'type': 'int_list', 'default': '3, 5', 'label': 'Neighbors'}},
+                'Logistic Regression': {'C': {'type': 'float_list', 'default': '0.01, 0.1, 1.0, 10.0', 'label': 'C (Inverse Reg)'}, 'solver': {'type': 'cat_list', 'options': ['saga', 'liblinear', 'lbfgs'], 'default': ['saga'], 'label': 'Solver'}, 'penalty': {'type': 'cat_list', 'options': ['l2', 'l1', 'elasticnet'], 'default': ['l2'], 'label': 'Penalty'}, 'l1_ratio': {'type': 'float_list', 'default': '0.5', 'label': 'L1 Ratio (ElasticNet)'}},
+                'Random Forest': {'n_estimators': {'type': 'int_list', 'default': '100, 200, 300', 'label': 'Trees'}, 'max_depth': {'type': 'int_list', 'default': '10, 20, 30, None', 'label': 'Max Depth (None=unlimited)'}, 'min_samples_split': {'type': 'int_list', 'default': '2, 5, 10', 'label': 'Min Samples Split'}, 'min_samples_leaf': {'type': 'int_list', 'default': '1, 2, 4', 'label': 'Min Samples Leaf'}, 'bootstrap': {'type': 'cat_list', 'options': [True, False], 'default': [True], 'label': 'Bootstrap'}},
+                'XGBoost': {'n_estimators': {'type': 'int_list', 'default': '100, 300', 'label': 'Trees'}, 'learning_rate': {'type': 'float_list', 'default': '0.01, 0.1, 0.3', 'label': 'Learning Rate'}, 'max_depth': {'type': 'int_list', 'default': '3, 6, 9', 'label': 'Max Depth'}, 'subsample': {'type': 'float_list', 'default': '0.8, 1.0', 'label': 'Subsample'}, 'colsample_bytree': {'type': 'float_list', 'default': '0.8, 1.0', 'label': 'Colsample by Tree'}},
+                'LightGBM': {'n_estimators': {'type': 'int_list', 'default': '100, 300', 'label': 'Trees'}, 'learning_rate': {'type': 'float_list', 'default': '0.01, 0.1', 'label': 'Learning Rate'}, 'num_leaves': {'type': 'int_list', 'default': '31, 50, 100', 'label': 'Num Leaves'}, 'max_depth': {'type': 'int_list', 'default': '-1, 10, 20', 'label': 'Max Depth (-1=No Limit)'}},
+                'CatBoost': {'iterations': {'type': 'int_list', 'default': '500, 1000', 'label': 'Iterations'}, 'learning_rate': {'type': 'float_list', 'default': '0.01, 0.1', 'label': 'Learning Rate'}, 'depth': {'type': 'int_list', 'default': '4, 6, 10', 'label': 'Depth'}, 'l2_leaf_reg': {'type': 'float_list', 'default': '1, 3, 5', 'label': 'L2 Leaf Reg'}},
+                'AdaBoost': {'n_estimators': {'type': 'int_list', 'default': '50, 100, 200', 'label': 'Estimators'}, 'learning_rate': {'type': 'float_list', 'default': '0.01, 0.1, 1.0', 'label': 'Learning Rate'}},
+                'Gradient Boosting': {'n_estimators': {'type': 'int_list', 'default': '100, 200', 'label': 'Estimators'}, 'learning_rate': {'type': 'float_list', 'default': '0.01, 0.1', 'label': 'Learning Rate'}, 'max_depth': {'type': 'int_list', 'default': '3, 5', 'label': 'Depth'}},
+                'SVM': {'C': {'type': 'float_list', 'default': '0.1, 1, 10', 'label': 'C'}, 'kernel': {'type': 'cat_list', 'options': ['linear', 'rbf', 'poly'], 'default': ['rbf'], 'label': 'Kernel'}, 'gamma': {'type': 'cat_list', 'options': ['scale', 'auto'], 'default': ['scale'], 'label': 'Gamma'}},
+                'KNN': {'n_neighbors': {'type': 'int_list', 'default': '3, 5, 7, 9', 'label': 'Neighbors'}, 'weights': {'type': 'cat_list', 'options': ['uniform', 'distance'], 'default': ['uniform'], 'label': 'Weights'}},
                 'Linear Regression': {'fit_intercept': {'type': 'cat_list', 'options': [True, False], 'default': [True], 'label': 'Intercept'}},
-                'Ridge': {'alpha': {'type': 'float_list', 'default': '0.1, 1.0', 'label': 'Alpha'}},
-                'Lasso': {'alpha': {'type': 'float_list', 'default': '0.1, 1.0', 'label': 'Alpha'}}
+                'Ridge': {'alpha': {'type': 'float_list', 'default': '0.1, 1.0, 10.0', 'label': 'Alpha'}},
+                'Lasso': {'alpha': {'type': 'float_list', 'default': '0.1, 1.0, 10.0', 'label': 'Alpha'}}
             }
 
             current_schema = model_params_schema.get(tune_model_name, {})
-            final_param_grid = {}
             
+            if not current_schema:
+                st.info(f"Detailed tuning schema not available for {tune_model_name} (likely an Ensemble). Using simple defaults if possible.")
+                
+            final_param_grid = {}
             col_p1, col_p2 = st.columns(2)
             cols_list = [col_p1, col_p2]
 
@@ -882,8 +1069,13 @@ with tab5:
                             vals = [x.strip() for x in raw_text.split(',')]
                             parsed_vals = []
                             for v in vals:
-                                if config['type'] == 'int_list': parsed_vals.append(int(v))
-                                else: parsed_vals.append(float(v))
+                                if v.lower() == 'none': parsed_vals.append(None)
+                                elif config['type'] == 'int_list': 
+                                    try: parsed_vals.append(int(v))
+                                    except: pass
+                                else: 
+                                    try: parsed_vals.append(float(v))
+                                    except: pass
                             if parsed_vals: final_param_grid[param_name] = parsed_vals
 
             st.divider()
@@ -896,22 +1088,41 @@ with tab5:
                 if not final_param_grid: st.warning("⚠️ No parameters selected.")
                 else:
                     with st.spinner(f"Tuning {tune_model_name}..."):
-                        base_model = available_fresh_models[tune_model_name]
-                        cv = TimeSeriesSplit(n_splits=3) if st.session_state.is_ts else 3
-                        try:
-                            if search_type == "Grid Search": search = GridSearchCV(base_model, final_param_grid, cv=cv, verbose=1, n_jobs=-1, error_score='raise')
-                            else: search = RandomizedSearchCV(base_model, final_param_grid, n_iter=n_iter, cv=cv, verbose=1, n_jobs=-1, error_score='raise')
-                            
-                            search.fit(st.session_state.X_train, st.session_state.y_train)
-                            st.success("Tuning Complete!")
-                            st.session_state.best_model = search.best_estimator_
-                            st.session_state.best_params = search.best_params_
-                            
-                            m1, m2 = st.columns(2)
-                            m1.metric("Best CV Score", f"{search.best_score_:.4f}")
-                            m2.write("**Best Parameters:**")
-                            m2.json(search.best_params_)
-                        except Exception as e: st.error(f"Tuning Failed: {e}")
+                        available_fresh_models = get_available_models(st.session_state.task_type)
+                        
+                        if tune_model_name in ['Voting', 'Stacking']:
+                            st.error("Direct tuning of Ensembles is not supported in this UI. Tune base models individually first.")
+                        elif tune_model_name not in available_fresh_models:
+                            st.error(f"Model {tune_model_name} not found in registry.")
+                        else:
+                            base_model = available_fresh_models[tune_model_name]
+                            cv = TimeSeriesSplit(n_splits=3) if st.session_state.is_ts else 3
+                            try:
+                                if search_type == "Grid Search": search = GridSearchCV(base_model, final_param_grid, cv=cv, verbose=1, n_jobs=-1, error_score='raise')
+                                else: search = RandomizedSearchCV(base_model, final_param_grid, n_iter=n_iter, cv=cv, verbose=1, n_jobs=-1, error_score='raise')
+                                
+                                search.fit(st.session_state.X_train, st.session_state.y_train)
+                                st.success("Tuning Complete!")
+                                st.session_state.best_model = search.best_estimator_
+                                st.session_state.best_params = search.best_params_
+                                
+                                m1, m2 = st.columns(2)
+                                m1.metric("Best CV Score", f"{search.best_score_:.4f}")
+                                m2.write("**Best Parameters:**")
+                                m2.json(search.best_params_)
+                                
+                                # NEW: Evaluate tuned model
+                                st.divider()
+                                st.write("### Test Set Performance (Tuned Model)")
+                                evaluate_model_performance(
+                                    st.session_state.best_model,
+                                    st.session_state.X_test, 
+                                    st.session_state.y_test, 
+                                    st.session_state.task_type, 
+                                    st.session_state.le
+                                )
+                                
+                            except Exception as e: st.error(f"Tuning Failed: {e}")
 
 # --- TAB 6: INFERENCE ---
 with tab6:
@@ -944,19 +1155,38 @@ with tab6:
             st.write("Preview:", st.session_state.inference_data.head())
             if st.button("Run Prediction", key="run_pred"):
                 try:
-                    # Pipeline: Impute -> Bin -> Preprocess -> Model
+                    cfg = st.session_state.get('pipeline_config', {})
                     X_new_raw = st.session_state.inference_data.copy()
                     
-                    # 1. Global Impute
+                    custom_code = cfg.get('custom_code', '')
+                    if custom_code:
+                        try:
+                            local_vars = {'df': X_new_raw, 'pd': pd, 'np': np, 're': re}
+                            exec(custom_code, globals(), local_vars)
+                            X_new_raw = local_vars['df']
+                            st.info("✅ Custom features applied.")
+                        except Exception as e:
+                            st.error(f"Error applying custom features: {e}")
+                            st.stop()
+
+                    mask_val = cfg.get('mask_val')
+                    mask_cols = cfg.get('mask_cols', [])
+                    if mask_cols and mask_val is not None:
+                        for col in mask_cols:
+                            if col in X_new_raw.columns:
+                                if pd.api.types.is_numeric_dtype(X_new_raw[col]):
+                                    try: val_to_mask = float(mask_val)
+                                    except: val_to_mask = mask_val
+                                else:
+                                    val_to_mask = mask_val
+                                X_new_raw[col] = X_new_raw[col].replace(val_to_mask, np.nan)
+
                     if st.session_state.imputer_model:
                         X_new_imp = st.session_state.imputer_model.transform(X_new_raw)
                     else:
                         X_new_imp = X_new_raw 
                         
-                    # 2. Manual Binning
-                    cfg = st.session_state.get('pipeline_config', {})
                     bin_cfg = cfg.get('binning_config', {})
-                    
                     if bin_cfg:
                         for col, c_conf in bin_cfg.items():
                             if col in X_new_imp.columns:
@@ -967,13 +1197,10 @@ with tab6:
                                     else:
                                         res = pd.cut(X_new_imp[col], bins=c_conf['params'], labels=False, include_lowest=True)
                                     
-                                    # Shift by +1
                                     X_new_imp[b_name] = (res.fillna(-1) + 1).astype(int)
-                                    # Drop Original
                                     X_new_imp = X_new_imp.drop(columns=[col])
                                 except: pass
 
-                    # 3. Main Transform
                     X_new = st.session_state.preprocessor.transform(X_new_imp)
                     if st.session_state.poly_model: X_new = st.session_state.poly_model.transform(X_new)
                     if st.session_state.pca_model: X_new = st.session_state.pca_model.transform(X_new)
@@ -981,13 +1208,23 @@ with tab6:
                     preds = st.session_state.best_model.predict(X_new)
                     if st.session_state.le: final_preds = st.session_state.le.inverse_transform(preds)
                     else: final_preds = preds
-                    st.write("Prediction:", final_preds)
-                except Exception as e: st.error(f"Error: {e}")
+                    
+                    st.success("Prediction Successful!")
+                    st.write("### Results")
+                    st.write(final_preds)
+                    
+                    res_df = X_new_raw.copy()
+                    res_df['Prediction'] = final_preds
+                    csv = res_df.to_csv(index=False).encode('utf-8')
+                    st.download_button("Download Predictions", csv, "predictions.csv", "text/csv")
+                    
+                except Exception as e: st.error(f"Prediction Error: {e}")
 
     st.divider()
     st.markdown("#### 2. Export Code 💾")
     if st.session_state.best_model is not None and 'pipeline_config' in st.session_state:
         if st.button("Generate Training Script"):
-            ui_name = "Random Forest"
+            ui_name = type(st.session_state.best_model).__name__
             script = generate_python_code(st.session_state.pipeline_config, ui_name, st.session_state.best_params)
             st.code(script, language='python')
+            
