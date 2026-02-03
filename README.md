@@ -1,145 +1,132 @@
-# NoCode-ML
+# NoCodeML Studio 🧠✨
 
-NoCode-ML is an end-to-end machine learning platform built with Streamlit that allows users to create, train, tune, evaluate, and deploy machine learning models without writing code. It follows industry best practices such as leakage-safe preprocessing, proper train-test splitting, cross-validation, hyperparameter tuning, and explainable pipelines.
+![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
+![Framework](https://img.shields.io/badge/Framework-Streamlit-FF4B4B)
+![Library](https://img.shields.io/badge/Library-Scikit--Learn-orange)
+![Pipeline](https://img.shields.io/badge/Architecture-sklearn.Pipeline-green)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-The project is designed for students, analysts, and practitioners who want to experiment with machine learning workflows interactively while still relying on robust Scikit-learn pipelines under the hood.
+**NoCodeML Studio** is an end-to-end machine learning platform designed for rapid prototyping and educational experimentation. 
 
----
-
-## Features
-
-* Upload CSV or Excel datasets
-* Automatic data type detection
-* Interactive data visualization and profiling
-* Leakage-safe preprocessing pipelines
-* Advanced feature engineering:
-
-  * Log transformation
-  * Binning
-  * Date feature extraction
-  * Polynomial features
-  * PCA
-* Multiple imputation strategies
-* Categorical encoding (One-Hot, Ordinal)
-* Imbalanced data handling with SMOTE
-* Support for both Classification and Regression
-* Time series–aware training mode
-* Train multiple models in parallel
-* Ensemble models (Voting and Stacking)
-* Automated hyperparameter tuning (Grid Search and Random Search)
-* Model evaluation with metrics and plots
-* End-to-end inference pipeline for new data
-
----
-## Supported Models
-
-### Classification
-
-* Logistic Regression
-* Random Forest Classifier
-* XGBoost Classifier
-* Support Vector Machine
-* K-Nearest Neighbors
-* Naive Bayes
-* Voting Classifier
-* Stacking Classifier
-
-### Regression
-
-* Linear Regression
-* Random Forest Regressor
-* XGBoost Regressor
-* Support Vector Regressor
-* K-Nearest Neighbors Regressor
-* Ridge, Lasso, ElasticNet
-* Voting Regressor
-* Stacking Regressor
+Unlike standard dashboards, this application is built upon robust **Scikit-Learn Pipelines**. It ensures that every preprocessing step—from imputation to encoding—is stateful and leakage-proof. Users can visually build a model, tune it, and export a production-ready Python script or serialized model file without writing code.
 
 ---
 
-## Project Structure
+## 🚀 Key Features
 
-The application is organized into six tabs:
+### 📊 Data & Profiling
+* **Broad Format Support:** Upload CSV, Excel, JSON, Parquet, or TSV files.
+* **Deep Profiling:** Integration with `ydata-profiling` for comprehensive exploratory data analysis (EDA).
+* **Visualization:** Interactive correlation heatmaps and distribution plots.
 
-1. Visualization
-   Data preview, summary statistics, correlation heatmaps, distributions, and deep profiling using ydata-profiling.
+### 🛠️ Advanced Preprocessing
+* **Leakage-Free Architecture:** All transformations are fitted on training data and applied consistently to test/inference data.
+* **Custom Scripting:** A secure sandbox to write custom Python logic for feature engineering (e.g., `df['ratio'] = df['col_a'] / df['col_b']`).
+* **Handling Missing Data:** Strategies include Mean, Median, KNN, Random Sampling, and Constant value imputation.
+* **Data Cleaning:** Outlier clipping (IQR method) and automatic binning.
+* **Scaling & Encoding:** Supports Standard, MinMax, Robust, and MaxAbs scalers; OneHot and Ordinal encoders.
+* **Imbalance Handling:** Integrated **SMOTE** (Synthetic Minority Over-sampling Technique) for classification tasks.
 
-2. Preprocessing
-   Column selection, feature engineering, encoding, scaling, imputation, PCA, polynomial features, SMOTE, and train-test splitting.
+### 🤖 Modeling & Training
+* **Multi-Task:** Supports both **Classification** and **Regression**.
+* **Algorithm Suite:** Includes Linear/Logistic Regression, Random Forest, XGBoost, LightGBM, CatBoost, SVM, KNN, and Naive Bayes.
+* **Ensembles:** Build **Voting** and **Stacking** ensembles via the UI.
+* **Time-Series Mode:** Time-aware train/test splitting for temporal datasets.
 
-3. Training
-   Train multiple models and ensembles using a consistent preprocessing pipeline.
-
-4. Evaluation
-   Compare model performance with metrics, plots, confusion matrices, and reports.
-
-5. Tuning
-   Perform automated hyperparameter optimization using GridSearchCV or RandomizedSearchCV.
-
-6. Inference
-   Make predictions on new data using the trained pipeline via CSV upload or manual input.
+### ⚡ Tuning & MLOps
+* **Hyperparameter Optimization:** Automated Grid Search and Random Search.
+* **Code Generation:** Export the entire visual pipeline as a clean, executable Python script.
+* **Model Export:** Download the trained pipeline as a `.pkl` file (using `dill` for robust serialization).
 
 ---
 
-## Installation
+## 📂 Application Workflow
 
-Clone the repository:
+The application guides users through a logical 6-step workflow:
 
+1.  **📊 Visualization:** Preview raw data, view statistics, and generate profile reports.
+2.  **⚙️ Preprocessing:** Configure the pipeline (imputation, encoding, scaling, SMOTE, PCA).
+3.  **🧠 Training:** Select algorithms, configure ensembles, and execute training.
+4.  **📈 Evaluation:** Analyze performance using Confusion Matrices, ROC Curves, and Residual plots.
+5.  **⚡ Tuning:** Optimize hyperparameters using Cross-Validation.
+6.  **🔮 Inference:** Upload new datasets to generate predictions using the frozen pipeline.
+
+---
+
+## 💻 Installation
+
+### Prerequisites
+* Python 3.9 or higher
+
+### 1. Clone the Repository
 ```bash
-git clone https://github.com/haqueWasif/NoCode-ML.git
+git clone [https://github.com/haqueWasif/NoCode-ML.git](https://github.com/haqueWasif/NoCode-ML.git)
 cd NoCode-ML
+
 ```
 
-Create a virtual environment and install dependencies:
+### 2. Install Dependencies
+
+It is recommended to use a virtual environment.
 
 ```bash
 pip install -r requirements.txt
+
 ```
 
-Run the application:
+### 3. Run the Application
 
 ```bash
 streamlit run test.py
+
 ```
 
 ---
 
-## Requirements
+## 📦 Requirements
 
-* Python 3.9+
-* streamlit
-* pandas
-* numpy
-* scikit-learn
-* matplotlib
-* seaborn
-* xgboost
-* ydata-profiling
-* imbalanced-learn (optional, for SMOTE)
+Create a `requirements.txt` file with the following dependencies to ensure all features (including CatBoost and LightGBM) work correctly:
 
----
+```text
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+scikit-learn
+xgboost
+lightgbm
+catboost
+imbalanced-learn
+ydata-profiling
+dill
 
-## Design Philosophy
-
-NoCode-ML prioritizes correctness and reproducibility over shortcuts. All preprocessing is fitted only on training data and applied consistently during evaluation and inference. Feature engineering steps are modular and explicitly controlled by the user, making the system transparent and extensible.
-
----
-
-## Disclaimer
-
-This project is intended for learning, experimentation, and rapid prototyping. For production deployment, additional validation, monitoring, and security considerations are required.
+```
 
 ---
 
-# 👥 Meet the Team
+## 👥 Meet the Team
 
-We would like to acknowledge the hard work and dedication of the following contributors who made this project possible.
+We would like to acknowledge the hard work and dedication of the contributors who made this project possible.
 
 | Contributor | GitHub Profile |
-| :--- | :--- |
-| <img src="https://github.com/mdjahirulislam56.png?size=50" width="50" style="border-radius: 50%;"/> **Md Jahirul Islam** | [@mdjahirulislam56](https://github.com/mdjahirulislam56) |
+| --- | --- |
 | <img src="https://github.com/haqueWasif.png?size=50" width="50" style="border-radius: 50%;"/> **Wasif Haque** | [@haqueWasif](https://github.com/haqueWasif/) |
+| <img src="https://github.com/mdjahirulislam56.png?size=50" width="50" style="border-radius: 50%;"/> **Md Jahirul Islam** | [@mdjahirulislam56](https://github.com/mdjahirulislam56) |
 | <img src="https://github.com/Saifuddin-Yasir.png?size=50" width="50" style="border-radius: 50%;"/> **Saifuddin Yasir** | [@Saifuddin-Yasir](https://github.com/Saifuddin-Yasir) |
 
 ---
-*Thank you for your valuable contributions!* 🚀
+
+## ⚠️ Disclaimer
+
+This tool allows the execution of custom Python code via the "Custom Feature Engineering" tab. While powerful, this feature uses Python's `exec()` function. **Do not deploy this application on a public server without adding proper sandboxing or disabling the custom script feature.**
+
+---
+
+## © Copyright
+
+**Copyright © 2026 Wasif Haque, Md Jahirul Islam, Saifuddin Yasir.**
+
+This project is licensed under the **MIT License**. You are free to use, modify, and distribute this software in accordance with the license terms.
+
+```
