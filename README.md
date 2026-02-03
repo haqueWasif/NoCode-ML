@@ -86,7 +86,7 @@ The application is organized into six tabs:
 Clone the repository:
 
 ```bash
-git clone https://github.com/your-username/NoCode-ML.git
+git clone https://github.com/haqueWasif/NoCode-ML.git
 cd NoCode-ML
 ```
 
